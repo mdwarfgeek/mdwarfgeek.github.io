@@ -1,0 +1,21 @@
+Continuing work on interaction.  Still seen some residual flakiness
+during testing but that may be my fingers being too close together.
+
+Zoom should really use the current pointer (center) location as the
+invariant point for both wheely mouse and pinch gesture.  For the
+latter the transitions seem to be a bit tricky.  We may need to fix
+the coordinate system issues as below to make this work properly,
+one way to do it would be to allow arbitrary roll rather than
+forcing North up, then I think the problem is well-posed (would have
+to add two-fingered rotation support).
+
+Initial browser window orientation not read properly sometimes?
+
+fix mouse moves to be in the correct projection
+
+4096^2 is okay, but for better support on older devices 2048^2 would
+be desirable.  can we do this without too much sacrifice?  we're
+allowed 8 texture units.  26 sectors needs 6.5 2048^2 tiles with
+optimal packing so each tile would have room for 4 sectors.
+
+True North vs magnetic North, checks now we've done it.
