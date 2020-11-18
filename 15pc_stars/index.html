@@ -1,0 +1,559 @@
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>15pc mid to late M-dwarf sample (509 stars)</title>
+<style type="text/css">
+body {
+  margin: 0;
+  padding: 0;
+}
+.container {
+  position: relative;
+}
+#glcanvas {
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+#overlay {
+  position: absolute;
+  left: 1em;
+  bottom: 1em;
+}
+#coords {
+  font-family: monospace, monospace;
+  font-size: 1em;
+}
+#plus {
+  display: none;
+}
+#minus {
+  display: none;
+}
+#spinny {
+  display: none;
+}
+label svg {
+  stroke: #cccccc;
+  stroke-width: 3;
+}
+:checked+label svg {
+  stroke: #00ff00;
+  stroke-width: 3;
+}
+</style>
+</head>
+<body bgcolor="#000000" text="#ffffff">
+<div class="container">
+<canvas id="glcanvas"></canvas>
+<div id="overlay">
+  <input type="button" id="plus">
+  <label for="plus">
+    <svg width="2.5em" height="2.5em" viewBox="0 0 32 32">
+      <line x1="16" y1="8" x2="16" y2="24"/>
+      <line x1="8" y1="16" x2="24" y2="16"/>
+    </svg>
+  </label>
+  <br>
+  <input type="button" id="minus">
+  <label for="minus">
+    <svg width="2.5em" height="2.5em" viewBox="0 0 32 32">
+      <line x1="8" y1="16" x2="24" y2="16"/>
+    </svg>
+  </label>
+  <br>
+  <input type="checkbox" id="spinny" checked>
+  <label for="spinny">
+    <svg width="2.5em" height="2.5em" viewBox="0 0 32 32">
+      <path d="M 12 4 L 16 8 A 8 8, 0, 1, 0, 24 16" fill="transparent">
+    </svg>
+  </label>
+</div>
+</div>
+<script src="15pc_stars.js"></script>
+<script src="coord.js"></script>
+<script src="glutil.js"></script>
+<script>
+const canvas = document.querySelector("#glcanvas");
+if(canvas === null) {
+  alert("Unable to locate canvas");
+}
+
+const plusbtn = document.getElementById("plus");
+const minusbtn = document.getElementById("minus");
+const spinnycb = document.getElementById("spinny");
+  
+// Ensure 1:1 pixels.
+var dpr = 1;
+if("devicePixelRatio" in window)
+  dpr = window.devicePixelRatio;
+
+// Figure out what a "line" is, roughly.
+var testel = document.createElement("div");
+testel.innerHTML = "<span>test</span>";
+document.querySelector("body").appendChild(testel);
+var lineheight = testel.firstElementChild.offsetHeight;
+document.querySelector("body").removeChild(testel);
+
+canvas.width = canvas.clientWidth * dpr;
+canvas.height = canvas.clientHeight * dpr;
+
+const gl = canvas.getContext("webgl");
+if(gl === null) {
+  alert("Unable to initialize WebGL.");
+}
+
+gl.clearColor(0.0, 0.0, 0.0, 1.0);
+gl.clearDepth(1.0);
+gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+const src_overlay_vertex_shader = `
+  uniform mat4 modelview;
+  uniform mat4 projection;
+  uniform float camdist;
+  uniform float pointsize;
+
+  attribute vec3 center;
+  attribute vec3 color;
+
+  varying vec4 pointcolor;
+
+  void main() {
+    vec3 v_pos = vec3(modelview * vec4(center, 1));
+
+    float inten = min(1.0, max(0.2, 10.0 / length(v_pos)));
+    pointcolor = vec4(inten*color, 1.0);
+
+    gl_Position = projection * modelview * vec4(center, 1);
+    gl_PointSize = pointsize;
+  }
+`;
+
+const src_overlay_fragment_shader = `
+  precision mediump float;
+
+  varying vec4 pointcolor;
+
+  void main() {
+    gl_FragColor = pointcolor;
+  }
+`;
+
+const shol = load_program(gl, src_overlay_vertex_shader, src_overlay_fragment_shader);
+
+// Star list.
+const star_buffer = gl.createBuffer();
+  
+var nstar = tab_15pc_stars.length;
+var star_vertices = new Float32Array(6*(nstar+1));
+  
+for(var istar = 0; istar < nstar; istar++) {
+  var ss = tab_15pc_stars[istar];
+      
+  var ra = ss[0] * Math.PI / 180.0;
+  var de = ss[1] * Math.PI / 180.0;
+  var dist = ss[2];
+      
+  var n = ad_to_v(ra, de);
+
+  star_vertices[6*istar+0] = n[0]*dist;
+  star_vertices[6*istar+1] = n[1]*dist;
+  star_vertices[6*istar+2] = n[2]*dist;
+
+  star_vertices[6*istar+3] = 1.0;
+  star_vertices[6*istar+4] = 0.0;
+  star_vertices[6*istar+5] = 0.0;
+}
+
+// Sun
+star_vertices[6*nstar+0] = 0.0;
+star_vertices[6*nstar+1] = 0.0;
+star_vertices[6*nstar+2] = 0.0;
+
+star_vertices[6*nstar+3] = 1.0;
+star_vertices[6*nstar+4] = 1.0;
+star_vertices[6*nstar+5] = 0.0;
+
+gl.bindBuffer(gl.ARRAY_BUFFER, star_buffer);
+gl.bufferData(gl.ARRAY_BUFFER,
+	      star_vertices,
+	      gl.STATIC_DRAW);
+  
+// Define camera position.
+var cam_ra = 0;
+var cam_de = 0;
+var cam_dist = 22.0;
+var cam_spin = 0;
+  
+var cam_n;
+var m_modelview;
+set_cam();
+  
+var m_projection;
+set_size(canvas.width, canvas.height);
+
+function draw (gl, dt) {
+  gl.clearColor(0.0, 0.0, 0.0, 1.0);
+  gl.clearDepth(1.0);
+  gl.enable(gl.DEPTH_TEST);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  // Set shader program.
+  gl.useProgram(shol.program);
+  
+  // Model-view-projection matrix.
+  gl.uniformMatrix4fv(shol.modelview, false, m_modelview);
+  gl.uniformMatrix4fv(shol.projection, false, m_projection);
+
+  // Point size accounting for device pixel ratio.
+  gl.uniform1f(shol.camdist, cam_dist);
+  gl.uniform1f(shol.pointsize, 4.0*dpr);
+
+  // Star positions and colours.
+  gl.bindBuffer(gl.ARRAY_BUFFER, star_buffer);
+  gl.vertexAttribPointer(shol.center, 3, gl.FLOAT, false, 6*4, 0);
+  gl.enableVertexAttribArray(shol.center);
+  gl.vertexAttribPointer(shol.color, 3, gl.FLOAT, false, 6*4, 3*4);
+  gl.enableVertexAttribArray(shol.color);
+
+  // Draw stars.
+  gl.drawArrays(gl.POINTS, 0, nstar+1);
+  
+  gl.disableVertexAttribArray(shol.center);
+  gl.disableVertexAttribArray(shol.color);
+}
+
+var start = null;
+
+function render (now) {
+  if(start === null)
+    start = now;
+
+  var dt = now - start;
+
+  var millis_per_rev = 200000;
+  var revs = dt / millis_per_rev;
+
+  if(spinnycb.checked) {
+    cam_spin = 2.0 * Math.PI * (revs - Math.round(revs));
+  }
+  else {
+    if(start !== null) {
+      start = null;
+      cam_ra += cam_spin;
+      cam_spin = 0;
+    }
+  }
+  
+  set_cam();
+  
+  draw(gl, dt);
+
+  if(spinnycb.checked) {
+    requestAnimationFrame(render); // animation loop
+  }
+}
+
+function set_cam () {
+  cam_n = ad_to_v(cam_ra+cam_spin, cam_de);
+  m_modelview = look_at([cam_n[0]*cam_dist, cam_n[1]*cam_dist, cam_n[2]*cam_dist], [0, 0, 0], [0, 0, 1]);
+}
+    
+function set_perspective (width, height) {
+  m_projection = make_perspective(1.0, width/height, 0.1, 100);
+}
+  
+function set_size (width, height) {
+  gl.viewport(0, 0, width, height);
+  set_perspective(width, height);
+}
+
+function resize () {
+  // Ensure 1:1 pixels.
+  const width = canvas.clientWidth * dpr;
+  const height = canvas.clientHeight * dpr;
+
+  if(canvas.width !== width ||
+     canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+
+    set_size(width, height);
+  }
+
+  requestAnimationFrame(render);
+}
+
+var gesture_active = 0;
+var mouse_active = false;
+
+var gesture_last_dx;
+var gesture_last_dy;
+var gesture_last_scale;
+var gesture_offset_x;
+var gesture_offset_y;
+var gesture_offset_scale;
+var gesture_ref_x;
+var gesture_ref_y;
+var gesture_ref_dist;
+var gesture_ref_ntouch;
+var gesture_start_modelview;
+var gesture_start_ra;
+var gesture_start_de;
+var gesture_dist;
+
+function touch_event (e) {
+  e.preventDefault();
+
+  if(mouse_active)
+    return;
+  
+  // Compute centre.
+  var cent_x = 0;
+  var cent_y = 0;
+
+  if(e.touches.length > 0) {
+    for(var i = 0; i < e.touches.length; i++) {
+      cent_x += e.touches[i].clientX;
+      cent_y += e.touches[i].clientY;
+    }
+    
+    cent_x /= e.touches.length;
+    cent_y /= e.touches.length;
+  }
+
+  // Compute distance.
+  var dist = null;
+  
+  if(e.touches.length == 2)
+    dist = Math.hypot(e.touches[1].clientX - e.touches[0].clientX,
+		      e.touches[1].clientY - e.touches[0].clientY);
+    
+  if(e.type == "touchstart") {
+    // Initialization if this is the start of a new sequence.
+    if(gesture_active == 0) {
+      gesture_start_modelview = m_modelview.slice();
+      gesture_start_ra = cam_ra;
+      gesture_start_de = cam_de;
+      gesture_dist = cam_dist;
+      gesture_last_dx = 0;
+      gesture_last_dy = 0;
+      gesture_last_scale = 1.0;
+      gesture_offset_x = 0;
+      gesture_offset_y = 0;
+      gesture_offset_scale = 1.0;
+      gesture_ref_x = 0;
+      gesture_ref_y = 0;
+      gesture_ref_dist = null;
+      gesture_ref_ntouch = 0;
+    }
+    
+    gesture_active = 1;
+  }
+  else if(e.type == "touchend" && e.touches.length == 0) {
+    gesture_active = 0;
+  }
+  else if(e.type == "touchcancel" && e.touches.length == 0) {
+    // Cancel bails now before we draw anything.
+    gesture_active = 0;
+    return;
+  }
+
+  // Check if this is a state change.
+  if(e.type == "touchstart" || e.type == "touchend" ||
+     e.touches.length != gesture_ref_ntouch) {
+    // Definition of centre may have changed, set up reference to null
+    // out any differences to prevent jumps.
+    gesture_ref_x = cent_x;
+    gesture_ref_y = cent_y;
+    gesture_ref_dist = dist;
+    gesture_ref_ntouch = e.touches.length;
+    
+    gesture_offset_x = gesture_last_dx;
+    gesture_offset_y = gesture_last_dy;
+    gesture_offset_scale = gesture_last_scale;
+  }
+
+  // Compute deltas and scale.
+  var dx = gesture_offset_x + cent_x - gesture_ref_x;
+  var dy = gesture_offset_y + cent_y - gesture_ref_y;
+
+  var scale = gesture_offset_scale;
+  if(gesture_ref_dist !== null && dist !== null &&
+     gesture_ref_dist > 0 && dist > 0) {
+    var thisscale = gesture_ref_dist / dist;
+    scale *= thisscale;
+  }
+  
+  // Update display.
+  gesture_update(dx, dy, scale);
+
+  gesture_last_dx = dx;
+  gesture_last_dy = dy;
+  gesture_last_scale = scale;
+}
+
+function mouse_event (e) {
+  if(gesture_active > 0)
+    return;
+    
+  if(e.type == "mousedown") {
+    // Initialization if this is the start of a new sequence.
+    if(e.button == 0) {
+      gesture_start_modelview = m_modelview.slice();
+      gesture_start_ra = cam_ra;
+      gesture_start_de = cam_de;
+      gesture_dist = cam_dist;
+      gesture_ref_x = e.clientX;
+      gesture_ref_y = e.clientY;
+      mouse_active = true;
+    }
+  }
+  else if(e.type == "mouseup") {
+    if(e.button == 0)
+      mouse_active = false;
+  }
+  else if(e.type == "mouseleave") {
+    mouse_active = false;
+    return;
+  }
+
+  if(mouse_active) {
+    var dx = e.clientX - gesture_ref_x;
+    var dy = e.clientY - gesture_ref_y;
+    
+    gesture_update(dx, dy);
+  }
+}
+
+function mouse_wheel (e) {
+  e.preventDefault();
+    
+  const width = canvas.clientWidth * dpr;
+  const height = canvas.clientHeight * dpr;
+
+  // Check delta mode.
+  var scfac = 1;  // pixels it would scroll the page, most browsers
+  if(e.deltaMode == 1) {  // lines
+    scfac = lineheight;
+  }
+  else if(e.deltaMode == 2) {  // pages
+    scfac = canvas.clientHeight;
+  }
+
+  // Compute adjustment to tan(fov).
+  var amnt = scfac*e.deltaY / canvas.clientHeight;
+  if(amnt < -0.5)
+    amnt = -0.5;
+  else if(amnt > 0.5)
+    amnt =  0.5;
+
+  cam_dist += 8*amnt;
+  if(cam_dist < 1.0) {
+    cam_dist = 1.0;
+  }
+  else if(cam_dist > 50.0) {  // this is needed because we only draw to 100pc
+    cam_dist = 50.0;
+  }
+  
+  set_cam();
+  
+  requestAnimationFrame(render);
+}
+  
+function gesture_update (dx, dy, scale = null) {
+  const width = canvas.clientWidth * dpr;
+  const height = canvas.clientHeight * dpr;
+
+  var scfac = 1.0 / (0.5*canvas.clientHeight);
+  
+  cam_ra = gesture_start_ra - dx*scfac;
+  cam_de = gesture_start_de + dy*scfac;
+  if(cam_de > Math.PI/2) {
+    cam_de = Math.PI/2;
+  }
+  else if(cam_de < -Math.PI/2) {
+    cam_de = -Math.PI/2;
+  }
+  
+  if(scale !== null) {
+    cam_dist = gesture_dist * scale;
+    if(cam_dist < 1.0) {
+      cam_dist = 1.0;
+    }
+    else if(cam_dist > 50.0) {
+      cam_dist = 50.0;
+    }
+  }
+  
+  set_cam();
+  
+  requestAnimationFrame(render);
+}
+
+canvas.addEventListener("touchstart", touch_event);
+canvas.addEventListener("touchmove", touch_event);
+canvas.addEventListener("touchend", touch_event);
+canvas.addEventListener("touchcancel", touch_event);
+  
+canvas.addEventListener("mousedown", mouse_event);
+canvas.addEventListener("mousemove", mouse_event);
+canvas.addEventListener("mouseup", mouse_event);
+canvas.addEventListener("mouseleave", mouse_event);
+
+canvas.addEventListener("wheel", mouse_wheel);
+
+// Detect orientation change, 0.1s delay added to work around problem with
+// Safari where reading the canvas size from orientationchange still returns
+// the old value.
+window.addEventListener("orientationchange", function() {
+  window.setTimeout(function() {
+    resize();
+  }, 100);
+}, false);
+
+window.addEventListener("resize", resize);
+
+plusbtn.addEventListener("click", function() {
+  const width = canvas.clientWidth * dpr;
+  const height = canvas.clientHeight * dpr;
+    
+  cam_dist -= 1.0;
+  if(cam_dist < 1.0) {
+    cam_dist = 1.0;
+  }
+  else if(cam_dist > 50.0) {
+    cam_dist = 50.0;
+  }
+  
+  set_cam();
+  
+  requestAnimationFrame(render);
+});
+
+minusbtn.addEventListener("click", function() {
+  const width = canvas.clientWidth * dpr;
+  const height = canvas.clientHeight * dpr;
+
+  cam_dist += 1.0;
+  if(cam_dist < 1.0) {
+    cam_dist = 1.0;
+  }
+  else if(cam_dist > 50.0) {
+    cam_dist = 50.0;
+  }
+  
+  set_cam();
+  
+  requestAnimationFrame(render);
+});
+
+spinnycb.addEventListener("change", function() {
+  requestAnimationFrame(render);
+});
+  
+requestAnimationFrame(render);
+</script>
+</body>
+</html>
