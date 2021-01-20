@@ -1,0 +1,875 @@
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bright star demo</title>
+<style type="text/css">
+body {
+  margin: 0;
+  padding: 0;
+}
+.container {
+  position: relative;
+}
+#glcanvas {
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+#overlay {
+  position: absolute;
+  left: 1em;
+  bottom: 1em;
+}
+#coords {
+  font-family: monospace, monospace;
+  font-size: 1em;
+}
+.permbox {
+  z-index: 1;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 50%;
+  margin-right: -50%;
+  transform: translate(-50%, -50%);
+  background-color: #eeeeee;
+  color: #000000;
+  padding: 2em;
+}
+.permtitle {
+  font-size: 120%;
+  font-weight: bold;
+}
+.permtext {
+  margin-bottom: 2em;
+}
+.permbutton {
+  font-size: inherit;
+  width: 100%;
+  height: 4em;
+  display: block;
+}
+.permleft {
+  float: left;
+  width: 45%;
+}
+.permright {
+  float: right;
+  width: 45%;
+}
+#stick {
+  display: none;
+}
+#plus {
+  display: none;
+}
+#minus {
+  display: none;
+}
+label svg {
+  stroke: #cccccc;
+  stroke-width: 3;
+}
+:checked+label svg {
+  stroke: #00ff00;
+  stroke-width: 3;
+}
+</style>
+</head>
+<body bgcolor="#000000" text="#ffffff">
+<div class="container">
+<canvas id="glcanvas"></canvas>
+<div id="overlay">
+  <input type="button" id="plus">
+  <label for="plus">
+    <svg width="2.5em" height="2.5em" viewBox="0 0 32 32">
+      <line x1="16" y1="8" x2="16" y2="24"/>
+      <line x1="8" y1="16" x2="24" y2="16"/>
+    </svg>
+  </label>
+  <br>
+  <input type="button" id="minus">
+  <label for="minus">
+    <svg width="2.5em" height="2.5em" viewBox="0 0 32 32">
+      <line x1="8" y1="16" x2="24" y2="16"/>
+    </svg>
+  </label>
+  <br>
+  <input type="checkbox" id="stick">
+  <label for="stick">
+    <svg width="2.5em" height="2.5em" viewBox="0 0 32 32">
+      <circle cx="16" cy="8" r="6" fill="transparent"/>
+      <line x1="16" y1="14" x2="16" y2="24"/>
+      <line x1="16" y1="22" x2="8" y2="16"/>
+      <line x1="16" y1="22" x2="24" y2="16"/>
+      <line x1="16" y1="24" x2="8" y2="32"/>
+      <line x1="16" y1="24" x2="24" y2="32"/>
+    </svg>
+  </label>
+</div>
+</div>
+<script src="bright_stars.js"></script>
+<script src="constel.js"></script>
+<script src="coord.js"></script>
+<script src="glutil.js"></script>
+<script>
+const canvas = document.querySelector("#glcanvas");
+if(canvas === null) {
+  alert("Unable to locate canvas");
+}
+
+const plusbtn = document.getElementById("plus");
+const minusbtn = document.getElementById("minus");
+const stickcb = document.getElementById("stick");
+  
+// Ensure 1:1 pixels.
+var dpr = 1;
+if("devicePixelRatio" in window)
+  dpr = window.devicePixelRatio;
+
+// Figure out what a "line" is, roughly.
+var testel = document.createElement("div");
+testel.innerHTML = "<span>test</span>";
+document.querySelector("body").appendChild(testel);
+var lineheight = testel.firstElementChild.offsetHeight;
+document.querySelector("body").removeChild(testel);
+
+canvas.width = canvas.clientWidth * dpr;
+canvas.height = canvas.clientHeight * dpr;
+
+const gl = canvas.getContext("webgl");
+if(gl === null) {
+  alert("Unable to initialize WebGL.");
+}
+
+gl.clearColor(0.0, 0.0, 0.0, 1.0);
+gl.clearDepth(1.0);
+gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+const src_vertex_shader = `
+  uniform mat3 ctm;
+  uniform mat4 modelview;
+  uniform mat4 projection;
+  uniform float dpr;
+
+  attribute vec3 center;
+  attribute vec3 colour;
+
+  varying vec3 pointcolour;
+
+  void main() {
+    vec3 v_pos = vec3(modelview * vec4(ctm * center, 1));
+
+    pointcolour = colour;
+
+    float fac = sqrt(2.0/(1.0-v_pos[2]));
+    float xscl = projection[0][0];
+    float yscl = projection[1][1];
+    gl_Position = vec4(xscl*fac*v_pos[0], yscl*fac*v_pos[1], (0.1+0.9*v_pos[2])/0.9, 1);
+    gl_PointSize = 4.0 * dpr;
+  }
+`;
+
+const src_fragment_shader = `
+  precision mediump float;
+
+  varying vec3 pointcolour;
+
+  void main() {
+    vec2 dist = gl_PointCoord - vec2(0.5);
+    float rsq = dot(dist, dist);
+    float psf = exp(-16.0*rsq);
+    vec3 lin = clamp(pointcolour * psf, 0.0, 1.0);
+    float r = lin[0] < 0.0031308 ? lin[0] * 12.92 : 1.055 * pow(lin[0], 1.0 / 2.4) - 0.055;
+    float g = lin[1] < 0.0031308 ? lin[1] * 12.92 : 1.055 * pow(lin[1], 1.0 / 2.4) - 0.055;
+    float b = lin[2] < 0.0031308 ? lin[2] * 12.92 : 1.055 * pow(lin[2], 1.0 / 2.4) - 0.055;
+    gl_FragColor = vec4(r, g, b, 0.01);
+  }
+`;
+
+const src_overlay_vertex_shader = `
+  uniform mat3 ctm;
+  uniform mat4 modelview;
+  uniform mat4 projection;
+
+  attribute vec3 center;
+
+  void main() {
+    vec3 v_pos = vec3(modelview * vec4(ctm * center, 1));
+
+    float fac = sqrt(2.0/(1.0-v_pos[2]));
+    float xscl = projection[0][0];
+    float yscl = projection[1][1];
+    gl_Position = vec4(xscl*fac*v_pos[0], yscl*fac*v_pos[1], (0.1+0.9*v_pos[2])/0.9, 1);
+  }
+`;
+
+const src_overlay_fragment_shader = `
+  precision mediump float;
+
+  void main() {
+    gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0);  // gruesome green
+  }
+`;
+
+const sh = load_program(gl, src_vertex_shader, src_fragment_shader);
+const shol = load_program(gl, src_overlay_vertex_shader, src_overlay_fragment_shader);
+
+// JS functions implementing the same projection as the shaders.
+function proj_forward (v) {
+  var fac = Math.sqrt(2.0 / (1.0 - v[2]));
+  return [ xscl * fac * v[0], yscl * fac * v[1] ];
+}
+
+function proj_reverse (x, y) {
+  var rsq = x*x + y*y;
+  var ifac;
+  if(rsq < 4)
+    ifac = Math.sqrt(1.0 - rsq / 4);
+  else {
+    rsq = 4;
+    ifac = 0;
+  }
+  return [ ifac * x, ifac * y, rsq / 2 - 1, 0 ];
+}
+
+function srgb2lin (v) {
+  var u = v / 255.0;
+  if(u < 0.04045)
+    return(u / 12.92);
+  else
+    return(Math.pow(u+0.055 / 1.055, 2.4));
+}
+
+function lin2srgb (u) {
+  if(u < 0.0)
+    u = 0.0;
+  else if(u > 1.0)
+    u = 1.0;
+    
+  if(u < 0.0031308)
+    return(12.92*u);
+  else
+    return(1.055*Math.pow(u, 1.0/2.4) - 0.055);
+}
+  
+function do_starcat (coordlist) {
+  const position_buffer = gl.createBuffer();
+  const colour_buffer = gl.createBuffer();
+
+  // Number of stars.
+  var nstars = coordlist.length;
+
+  var vertices = new Float32Array(3*nstars);
+  var colours = new Float32Array(3*nstars);
+  
+  for(var istar = 0; istar < nstars; istar++) {
+    var ss = coordlist[istar];
+
+    // Extract and convert units as needed.
+    var ra = ss[0] * Math.PI / 180.0;
+    var de = ss[1] * Math.PI / 180.0;
+    var vmag = ss[2];
+    var rgb = ss[3];
+
+    // Linearize colour.
+    var r = srgb2lin((rgb & 0xff0000) >> 16);
+    var g = srgb2lin((rgb & 0x00ff00) >> 8);
+    var b = srgb2lin(rgb & 0x0000ff);
+    
+    // Convert stellar magnitude to linear units.
+    var zp = 1.0;  // stars bright than this saturate
+    
+    var magnorm = Math.pow(10.0, zp-0.4*vmag);
+    
+    var n = ad_to_v(ra, de);
+
+    vertices[3*istar+0] = n[0];
+    vertices[3*istar+1] = n[1];
+    vertices[3*istar+2] = n[2];
+    
+    colours[3*istar+0] = r * magnorm;
+    colours[3*istar+1] = g * magnorm;
+    colours[3*istar+2] = b * magnorm;
+  }
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, position_buffer);
+  gl.bufferData(gl.ARRAY_BUFFER,
+		vertices,
+		gl.STATIC_DRAW);
+  
+  gl.bindBuffer(gl.ARRAY_BUFFER, colour_buffer);
+  gl.bufferData(gl.ARRAY_BUFFER,
+		colours,
+		gl.STATIC_DRAW);
+  
+  return [position_buffer, colour_buffer, nstars];
+}
+
+const nstarcats = 1;
+var starcats = new Array(nstarcats);
+starcats[0] = do_starcat(bright_stars);
+
+// Constellation stick figures.
+const constel_buffer = gl.createBuffer();
+  
+var nconstel = constel_stick.length;
+var constel_vertices = new Float32Array(6*nconstel);
+  
+for(var iconstel = 0; iconstel < nconstel; iconstel++) {
+  var ss = constel_stick[iconstel];
+      
+  var ra1 = ss[0] * Math.PI / 180.0;
+  var de1 = ss[1] * Math.PI / 180.0;
+  var ra2 = ss[2] * Math.PI / 180.0;
+  var de2 = ss[3] * Math.PI / 180.0;
+      
+  var n1 = ad_to_v(ra1, de1);
+  var n2 = ad_to_v(ra2, de2);
+
+  constel_vertices[6*iconstel+0] = n1[0];
+  constel_vertices[6*iconstel+1] = n1[1];
+  constel_vertices[6*iconstel+2] = n1[2];
+  constel_vertices[6*iconstel+3] = n2[0];
+  constel_vertices[6*iconstel+4] = n2[1];
+  constel_vertices[6*iconstel+5] = n2[2];
+}
+
+gl.bindBuffer(gl.ARRAY_BUFFER, constel_buffer);
+gl.bufferData(gl.ARRAY_BUFFER,
+	      constel_vertices,
+	      gl.STATIC_DRAW);
+  
+// Define boresight for manual mode.
+var look_at_az = 0;
+var look_at_el = Math.PI/2;
+
+// Set up celestial to terrestrial transformation.
+var mjd = getmjd();
+var jdtk = mjd2jdtk(mjd);
+var jctk = jdtk2jctk(jdtk);
+
+var longitude = -0.001472;
+var latitude =  51.477806;
+var altitude = 0;  
+
+var pfbm = pfb_matrix(jctk);
+var dst = era_to_gmst(jctk) + longitude * Math.PI / 180.0;
+
+var phm = latitude_matrix(latitude * Math.PI / 180.0);
+  
+var lmst = dst + era(jdtk);
+var lstm = lst_matrix(lmst);
+  
+var ctm = m_x_m(phm, m_x_m(lstm, pfbm));
+
+// Declare these for later.
+var device_alphaoffset = 0;
+var device_havealphaoffset = false;
+var device_alpha = 0;
+var device_beta = 0;
+var device_gamma = 0;
+var device_absolute = false;
+var device_haveorient = false;
+  
+// Set modelview and projection parameters.
+var look_n;
+var m_modelview;
+set_look();
+  
+var look_thfov = 1.0;
+
+var m_projection;
+var update_timer = null;
+set_size(canvas.width, canvas.height);
+
+function draw (gl, dt) {
+  gl.clearColor(0.0, 0.0, 0.0, 1.0);
+  gl.clearDepth(1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  // Set shader program.
+  gl.useProgram(sh.program);
+
+  // Model-view-projection matrix.
+  gl.uniformMatrix3fv(sh.ctm, false, m_transpose(ctm));
+  gl.uniformMatrix4fv(sh.modelview, false, m_modelview);
+  gl.uniformMatrix4fv(sh.projection, false, m_projection);
+  gl.uniform1f(sh.dpr, dpr);
+  
+  // Render each star catalogue.
+  for(var istarcat = 0; istarcat < nstarcats; istarcat++) {
+    const bb = starcats[istarcat];
+
+    const position_buffer = bb[0];
+    const colour_buffer = bb[1];
+    const nstars = bb[2];
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, position_buffer);
+    gl.vertexAttribPointer(sh.center, 3, gl.FLOAT, false, 3*4, 0);
+    gl.enableVertexAttribArray(sh.center);
+    
+    gl.bindBuffer(gl.ARRAY_BUFFER, colour_buffer);
+    gl.vertexAttribPointer(sh.colour, 3, gl.FLOAT, false, 3*4, 0);
+    gl.enableVertexAttribArray(sh.colour);
+    
+    gl.drawArrays(gl.POINTS, 0, nstars);
+
+    gl.disableVertexAttribArray(sh.center);
+    gl.disableVertexAttribArray(sh.colour);
+  }
+
+  if(stickcb.checked) {
+    // Set shader program.
+    gl.useProgram(shol.program);
+    
+    // Model-view-projection matrix.
+    gl.uniformMatrix3fv(shol.ctm, false, m_transpose(ctm));
+    gl.uniformMatrix4fv(shol.modelview, false, m_modelview);
+    gl.uniformMatrix4fv(shol.projection, false, m_projection);
+    
+    gl.bindBuffer(gl.ARRAY_BUFFER, constel_buffer);
+    gl.vertexAttribPointer(shol.center, 3, gl.FLOAT, false, 3*4, 0);
+    gl.enableVertexAttribArray(shol.center);
+    
+    gl.drawArrays(gl.LINES, 0, 2*nconstel);
+    
+    gl.disableVertexAttribArray(shol.center);
+  }
+}
+
+var start = null;
+
+function render (now) {
+  if(start === null)
+    start = now;
+
+  var dt = now - start;
+
+  mjd = getmjd();
+  jdtk = mjd2jdtk(mjd);
+  
+  lmst = dst + era(jdtk);
+  lstm = lst_matrix(lmst);
+  
+  ctm = m_x_m(phm, m_x_m(lstm, pfbm));
+
+  if(device_haveorient) {
+    // Transformation matrix from (our) Earth to device frame.
+    // See https://www.w3.org/TR/orientation-event/
+    // The coordinate system is defined +x // E, +y // N, +z = up
+    // whereas ours has +x // S and +y // E so need to rotate
+    // an extra 90 degrees about z axis.
+    // The W3C documentation above specifies the compass directions
+    // are relative to true North for absolute orientation, but
+    // Apple's documentation states webkitCompassHeading is relative
+    // to magnetic North and the native Android API also seems to
+    // return results relative to magnetic North.  For simplicity
+    // we ignore this correction here, but see the tess_sectors
+    // demo for an attempt at correcting it.
+    var mat = m_identity();
+    euler_rotate(mat, 3, (90.0 + device_alpha - device_alphaoffset) * Math.PI / 180.0);
+    euler_rotate(mat, 1, device_beta * Math.PI / 180.0);
+    euler_rotate(mat, 2, device_gamma * Math.PI / 180.0);
+
+    if("orientation" in window) {
+      euler_rotate(mat, 3, -window.orientation * Math.PI / 180.0);
+    }
+    
+    m_modelview = m_to_gl(mat);
+  }
+  
+  draw(gl, dt);
+
+  //use with span id="coords"
+  //var look_c = mt_x_v(ctm, reverse_transform(m_modelview, [ 0, 0, -1, 0 ]));
+  //var ad = v_to_ad(look_c);
+  //document.getElementById("coords").innerHTML = base10_to_60(ad[0], "rad", ":", "", 0, "hr") + " " + base10_to_60(ad[1], "rad", ":", "+", 0, "deg");
+  
+  //requestAnimationFrame(render);
+}
+
+function update_cb () {
+  requestAnimationFrame(render);
+}
+  
+function set_look () {
+  if(!device_haveorient) {
+    look_n = ad_to_v(look_at_az, look_at_el);
+    var pole = m_x_v(ctm, [ 0, 0, 1 ]);
+    m_modelview = look_at([0, 0, 0], look_n, pole);
+  }
+}
+    
+function set_perspective (width, height) {
+  m_projection = make_perspective(look_thfov, width/height, 0.1, 100);
+
+  var scfac = look_thfov / (0.5*height);
+
+  var secppix = scfac * 3600.0 * 180.0 / (Math.PI * 15.041);
+  var upd = Math.round(1000.0 * (0.1 * secppix));
+  if(upd < 10)
+    upd = 10;
+  
+  if(update_timer !== null)
+    clearInterval(update_timer);
+
+  update_timer = setInterval(update_cb, upd);
+}
+  
+function set_size (width, height) {
+  gl.viewport(0, 0, width, height);
+  set_perspective(width, height);
+}
+
+function resize () {
+  // Ensure 1:1 pixels.
+  const width = canvas.clientWidth * dpr;
+  const height = canvas.clientHeight * dpr;
+
+  if(canvas.width !== width ||
+     canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+
+    set_size(width, height);
+  }
+
+  requestAnimationFrame(render);
+}
+
+// Setup to read device orientation.
+var permbox_loc;
+var permbox_orient;
+
+var permboxes = [];
+var nextpermbox = 0;
+  
+window.onload = function() {
+  if("DeviceOrientationEvent" in window) {
+    permbox_orient = document.createElement("div");
+
+    var htmlstr = "<div class=\"permbox\"><div><span class=\"permtitle\">Enable virtual reality mode?</span><p class=\"permtext\">Virtual reality mode uses your location and the orientation sensors of your device to orient the view in the direction the device is pointed automatically.";
+
+    var agent = window.navigator.userAgent;
+    var mm = agent.match(/i\S+\s+.*OS\s+(\d+)_?/);
+    if(mm != null) {
+      var iosver = parseInt(mm[1]);
+      if(iosver == 12) {
+	htmlstr += "  Note: this probably won't work on iOS 12 because the orientation API is disabled by default."
+      }
+    }
+    
+    htmlstr += "</p></div><div><div class=\"permleft\"><input class=\"permbutton\" type=\"button\" value=\"Yes\" onclick=\"deviceorientation_enable()\"></div><div class=\"permright\"><input class=\"permbutton\" type=\"button\" value=\"No\" onclick=\"deviceorientation_disable()\"></div></div></div>";
+
+    permbox_orient.innerHTML = htmlstr;
+
+    permboxes.push(permbox_orient);
+  }
+
+  if(permboxes.length > 0) {
+    document.querySelector("body").appendChild(permboxes[0]);
+    nextpermbox = 1;
+  }
+}
+
+function deviceorientation_enable () {
+  document.querySelector("body").removeChild(permbox_orient);
+  if(nextpermbox < permboxes.length) {
+    document.querySelector("body").appendChild(permboxes[nextpermbox]);
+    nextpermbox++;
+  }
+
+  var name = "deviceorientation";
+  if("ondeviceorientationabsolute" in window) {
+    name = "deviceorientationabsolute";
+  }
+  
+  if(typeof window.DeviceOrientationEvent.requestPermission === "function") {
+    window.DeviceOrientationEvent.requestPermission().then(response => {
+      if(response === "granted") {
+        window.addEventListener(name, deviceorientation_cb);
+      } else {
+        console.log("DeviceOrientation permissions not granted");
+      }
+    })
+    .catch(e => {
+      console.error(e)
+    });
+  }
+  else {
+    window.addEventListener(name, deviceorientation_cb);
+  }
+}
+
+function deviceorientation_disable () {
+  document.querySelector("body").removeChild(permbox_orient);
+  if(nextpermbox < permboxes.length) {
+    document.querySelector("body").appendChild(permboxes[nextpermbox]);
+    nextpermbox++;
+  }
+}
+
+function deviceorientation_cb (e) {
+  if(!e.absolute && e.webkitCompassHeading && !device_havealphaoffset) {
+    device_alphaoffset = e.alpha + e.webkitCompassHeading;
+    device_havealphaoffset = true;
+  }
+
+  device_alpha = e.alpha;
+  device_beta = e.beta;
+  device_gamma = e.gamma;
+  device_absolute = e.absolute;
+  device_haveorient = true;
+  
+  requestAnimationFrame(render);
+}
+   
+var gesture_active = 0;
+var mouse_active = false;
+
+var gesture_last_dx;
+var gesture_last_dy;
+var gesture_last_scale;
+var gesture_offset_x;
+var gesture_offset_y;
+var gesture_offset_scale;
+var gesture_ref_x;
+var gesture_ref_y;
+var gesture_ref_dist;
+var gesture_ref_ntouch;
+var gesture_start_modelview;
+var gesture_start_ra;
+var gesture_start_de;
+var gesture_thfov;
+
+function touch_event (e) {
+  e.preventDefault();
+
+  if(mouse_active)
+    return;
+  
+  // Compute centre.
+  var cent_x = 0;
+  var cent_y = 0;
+
+  if(e.touches.length > 0) {
+    for(var i = 0; i < e.touches.length; i++) {
+      cent_x += e.touches[i].clientX;
+      cent_y += e.touches[i].clientY;
+    }
+    
+    cent_x /= e.touches.length;
+    cent_y /= e.touches.length;
+  }
+
+  // Compute distance.
+  var dist = null;
+  
+  if(e.touches.length == 2)
+    dist = Math.hypot(e.touches[1].clientX - e.touches[0].clientX,
+		      e.touches[1].clientY - e.touches[0].clientY);
+    
+  if(e.type == "touchstart") {
+    // Initialization if this is the start of a new sequence.
+    if(gesture_active == 0) {
+      gesture_start_modelview = m_modelview.slice();
+      gesture_start_ra = look_at_az;
+      gesture_start_de = look_at_el;
+      gesture_thfov = look_thfov;
+      gesture_last_dx = 0;
+      gesture_last_dy = 0;
+      gesture_last_scale = 1.0;
+      gesture_offset_x = 0;
+      gesture_offset_y = 0;
+      gesture_offset_scale = 1.0;
+      gesture_ref_x = 0;
+      gesture_ref_y = 0;
+      gesture_ref_dist = null;
+      gesture_ref_ntouch = 0;
+    }
+    
+    gesture_active = 1;
+  }
+  else if(e.type == "touchend" && e.touches.length == 0) {
+    gesture_active = 0;
+  }
+  else if(e.type == "touchcancel" && e.touches.length == 0) {
+    // Cancel bails now before we draw anything.
+    gesture_active = 0;
+    return;
+  }
+
+  // Check if this is a state change.
+  if(e.type == "touchstart" || e.type == "touchend" ||
+     e.touches.length != gesture_ref_ntouch) {
+    // Definition of centre may have changed, set up reference to null
+    // out any differences to prevent jumps.
+    gesture_ref_x = cent_x;
+    gesture_ref_y = cent_y;
+    gesture_ref_dist = dist;
+    gesture_ref_ntouch = e.touches.length;
+    
+    gesture_offset_x = gesture_last_dx;
+    gesture_offset_y = gesture_last_dy;
+    gesture_offset_scale = gesture_last_scale;
+  }
+
+  // Compute deltas and scale.
+  var dx = gesture_offset_x + cent_x - gesture_ref_x;
+  var dy = gesture_offset_y + cent_y - gesture_ref_y;
+
+  var scale = gesture_offset_scale;
+  if(gesture_ref_dist !== null && dist !== null &&
+     gesture_ref_dist > 0 && dist > 0) {
+    var thisscale = gesture_ref_dist / dist;
+    scale *= thisscale;
+  }
+  
+  // Update display.
+  gesture_update(dx, dy, scale);
+
+  gesture_last_dx = dx;
+  gesture_last_dy = dy;
+  gesture_last_scale = scale;
+}
+
+function mouse_event (e) {
+  if(gesture_active > 0)
+    return;
+    
+  if(e.type == "mousedown") {
+    // Initialization if this is the start of a new sequence.
+    if(e.button == 0) {
+      gesture_start_modelview = m_modelview.slice();
+      gesture_start_ra = look_at_az;
+      gesture_start_de = look_at_el;
+      gesture_thfov = look_thfov;
+      gesture_ref_x = e.clientX;
+      gesture_ref_y = e.clientY;
+      mouse_active = true;
+    }
+  }
+  else if(e.type == "mouseup") {
+    if(e.button == 0)
+      mouse_active = false;
+  }
+  else if(e.type == "mouseleave") {
+    mouse_active = false;
+    return;
+  }
+
+  if(mouse_active) {
+    var dx = e.clientX - gesture_ref_x;
+    var dy = e.clientY - gesture_ref_y;
+    
+    gesture_update(dx, dy);
+  }
+}
+
+function mouse_wheel (e) {
+  e.preventDefault();
+    
+  const width = canvas.clientWidth * dpr;
+  const height = canvas.clientHeight * dpr;
+
+  // Check delta mode.
+  var scfac = 1;  // pixels it would scroll the page, most browsers
+  if(e.deltaMode == 1) {  // lines
+    scfac = lineheight;
+  }
+  else if(e.deltaMode == 2) {  // pages
+    scfac = canvas.clientHeight;
+  }
+
+  // Compute adjustment to tan(fov).
+  var amnt = scfac*e.deltaY / canvas.clientHeight;
+  if(amnt < -0.5)
+    amnt = -0.5;
+  else if(amnt > 0.5)
+    amnt =  0.5;
+
+  look_thfov *= (1.0 + amnt);
+  
+  set_perspective(width, height);
+  
+  requestAnimationFrame(render);
+}
+  
+function gesture_update (dx, dy, scale = null) {
+  const width = canvas.clientWidth * dpr;
+  const height = canvas.clientHeight * dpr;
+
+  var scfac = look_thfov / (0.5*canvas.clientHeight);
+  
+  var va = proj_reverse(-dx*scfac, dy*scfac);
+  var vb = reverse_transform(gesture_start_modelview, va);
+  var t = v_to_ad(vb);
+  look_at_az = t[0];
+  look_at_el = t[1];
+
+  if(scale !== null) {
+    look_thfov = gesture_thfov * scale;
+    
+    set_perspective(width, height);
+  }
+  
+  set_look();
+  
+  requestAnimationFrame(render);
+}
+
+canvas.addEventListener("touchstart", touch_event);
+canvas.addEventListener("touchmove", touch_event);
+canvas.addEventListener("touchend", touch_event);
+canvas.addEventListener("touchcancel", touch_event);
+  
+canvas.addEventListener("mousedown", mouse_event);
+canvas.addEventListener("mousemove", mouse_event);
+canvas.addEventListener("mouseup", mouse_event);
+canvas.addEventListener("mouseleave", mouse_event);
+
+canvas.addEventListener("wheel", mouse_wheel);
+
+// Detect orientation change, 0.1s delay added to work around problem with
+// Safari where reading the canvas size from orientationchange still returns
+// the old value.
+window.addEventListener("orientationchange", function() {
+  window.setTimeout(function() {
+    resize();
+  }, 100);
+}, false);
+
+window.addEventListener("resize", resize);
+
+plusbtn.addEventListener("click", function() {
+  const width = canvas.clientWidth * dpr;
+  const height = canvas.clientHeight * dpr;
+    
+  look_thfov /= 1.25;
+  
+  set_perspective(width, height);
+  
+  requestAnimationFrame(render);
+});
+
+minusbtn.addEventListener("click", function() {
+  const width = canvas.clientWidth * dpr;
+  const height = canvas.clientHeight * dpr;
+
+  look_thfov *= 1.25;
+  
+  set_perspective(width, height);
+  
+  requestAnimationFrame(render);
+});
+  
+stickcb.addEventListener("change", function() {
+  requestAnimationFrame(render);
+});
+
+requestAnimationFrame(render);
+</script>
+</body>
+</html>
