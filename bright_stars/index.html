@@ -143,6 +143,11 @@ if(gl === null) {
   alert("Unable to initialize WebGL.");
 }
 
+// Set up blending mode to sum pixels when there's overlap.
+gl.enable(gl.BLEND)
+gl.blendEquation(gl.FUNC_ADD)
+gl.blendFunc(gl.ONE, gl.ONE)
+
 gl.clearColor(0.0, 0.0, 0.0, 1.0);
 gl.clearDepth(1.0);
 gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -184,7 +189,7 @@ const src_fragment_shader = `
     float r = lin[0] < 0.0031308 ? lin[0] * 12.92 : 1.055 * pow(lin[0], 1.0 / 2.4) - 0.055;
     float g = lin[1] < 0.0031308 ? lin[1] * 12.92 : 1.055 * pow(lin[1], 1.0 / 2.4) - 0.055;
     float b = lin[2] < 0.0031308 ? lin[2] * 12.92 : 1.055 * pow(lin[2], 1.0 / 2.4) - 0.055;
-    gl_FragColor = vec4(r, g, b, 0.01);
+    gl_FragColor = vec4(r, g, b, 1.0);
   }
 `;
 
